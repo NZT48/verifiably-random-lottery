@@ -10,9 +10,12 @@ pragma solidity ^0.8.18;
  * @dev It implements Chainlink VRFv2.5 and Chainlink Automation
  */
 contract Raffle {
-    uint256 private immutable i_entranceFee;
-
     error Raffle_NotEnoughEthSent();
+
+    uint256 private immutable i_entranceFee;
+    address payable[] private s_players;
+
+    event EnteredRaffle(address indexed player);
 
     constructor(uint256 entranceFee) {
         i_entranceFee = entranceFee;
@@ -20,7 +23,8 @@ contract Raffle {
 
     function enterRaffle() external payable {
         if(msg.value < i_entranceFee) revert Raffle_NotEnoughEthSent();
-
+        s_players.push(payable(msg.sender));
+        emit EnteredRaffle(msg.sender);
     }
 
     function pickWinner() public {
