@@ -3,7 +3,7 @@
 pragma solidity ^0.8.18;
 
 import {VRFCoordinatorV2Interface} from "chainlink/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
-
+import {AutomationCompatibleInterface} from "chainlink/src/v0.8/automation/interfaces/AutomationCompatibleInterface.sol";
 import {VRFConsumerBaseV2} from "chainlink/src/v0.8/vrf/VRFConsumerBaseV2.sol";
 
 /**
@@ -12,10 +12,15 @@ import {VRFConsumerBaseV2} from "chainlink/src/v0.8/vrf/VRFConsumerBaseV2.sol";
  * @notice This contract is for creating a sample raffle
  * @dev It implements Chainlink VRFv2.5 and Chainlink Automation
  */
-contract Raffle is VRFConsumerBaseV2 {
+contract Raffle is VRFConsumerBaseV2, AutomationCompatibleInterface {
     error Raffle_NotEnoughEthSent();
-    error Raffle__TransferFailed();
+    error Raffle_TransferFailed();
     error Raffle_RaffleNotOpen();
+    error Raffle_UpkeepNotNeeded(
+        uint256 currentBalance,
+        uint256 numPlayers,
+        uint256 raffleState
+    );
 
     // Type declarations
     enum RaffleState {
@@ -101,10 +106,55 @@ contract Raffle is VRFConsumerBaseV2 {
 
         (bool success, ) = winner.call{value: address(this).balance}("");
         if (!success) {
-            revert Raffle__TransferFailed();
+            revert Raffle_TransferFailed();
         }
 
         emit PickedWinner(winner);
+    }
+
+    // Chainlink Automation
+
+    /**
+     * @dev This is the function that the Chainlink Keeper nodes call
+     * they look for `upkeepNeeded` to return True.
+     * the following should be true for this to return true:
+     * 1. The time interval has passed between raffle runs.
+     * 2. The lottery is open.
+     * 3. The contract has ETH.
+     * 4. There are players registered.
+     * 5. Implicitly, your subscription is funded with LINK.
+     */
+    function checkUpkeep(
+        bytes memory /* checkData */
+    ) public view returns (bool upkeepNeeded, bytes memory /* performData */) {
+        bool isOpen = RaffleState.OPEN == s_raffleState;
+        bool timePassed = ((block.timestamp - s_lastTimeStamp) >= i_interval);
+        bool hasPlayers = s_players.length > 0;
+        bool hasBalance = address(this).balance > 0;
+        upkeepNeeded = (timePassed && isOpen && hasBalance && hasPlayers);
+        return (upkeepNeeded, "0x0");
+    }
+
+    // 1. Get a random number
+    // 2. Use the random number to pick a player
+    // 3. Automatically called
+    function performUpkeep(bytes calldata performData) external override {
+        (bool upkeepNeeded, ) = checkUpkeep("");
+        if (!upkeepNeeded) {
+            revert Raffle_UpkeepNotNeeded(
+                address(this).balance,
+                s_players.length,
+                uint256(s_raffleState)
+            );
+        }
+        s_raffleState = RaffleState.CALCULATING;
+        uint256 requestId = i_vrfCoordinator.requestRandomWords(
+            i_gasLane,
+            i_subscriptionId,
+            REQUEST_CONFIRMATIONS,
+            i_callbackGasLimit,
+            NUM_WORDS
+        );
     }
 
     /* Getter Function */
